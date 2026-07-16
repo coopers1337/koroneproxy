@@ -78,6 +78,7 @@ func proxy(ctx *fasthttp.RequestCtx, target string, attempt int) {
 		req.Header.SetBytesKV(k, v)
 	})
 	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("Cookie", ".PUPPYSECURITY=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJzZXNzaW9uSWQiOiJjNjExZTIyZi00MWFjLTQzNmMtOGVkYy1mZTFmNDQ5N2I0YzMiLCJjcmVhdGVkQXQiOjE3ODQxMTA0Njl9.X7Wb4EctkgzR2Po3p-3gP-CQAvnz4bOZahGTHTmVskWdOlCdyX-2lnoh_NIzglV518kXdJ9YqtPi5qm_VvfWnQ")
 	req.Header.Del("Roblox-Id")
 
 	if err := client.Do(req, resp); err != nil {
