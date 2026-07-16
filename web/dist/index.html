@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>KoroneProxy</title>
+<style>
+  :root {
+    --background: 240 10% 4%;
+    --foreground: 0 0% 92%;
+    --card: 240 8% 7%;
+    --border: 240 6% 16%;
+    --muted-foreground: 240 5% 55%;
+    --primary: 20 90% 62%;
+    --primary-foreground: 20 90% 8%;
+    --destructive: 0 72% 63%;
+    --ring: 20 90% 62%;
+    --radius: 0.625rem;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    min-height: 100vh;
+    background: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .card {
+    width: 100%;
+    max-width: 520px;
+    background: hsl(var(--card));
+    border: 1px solid hsl(var(--border));
+    border-radius: var(--radius);
+    padding: 24px;
+  }
+  .label {
+    font-size: 13px;
+    font-weight: 500;
+    color: hsl(var(--muted-foreground));
+    margin-bottom: 10px;
+  }
+  .label b { color: hsl(var(--foreground)); }
+  input {
+    width: 100%;
+    background: hsl(var(--background));
+    border: 1px solid hsl(var(--border));
+    color: hsl(var(--foreground));
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 13.5px;
+    padding: 10px 12px;
+    border-radius: calc(var(--radius) - 2px);
+    outline: none;
+  }
+  input:focus { border-color: hsl(var(--ring)); box-shadow: 0 0 0 3px hsl(var(--ring) / 0.15); }
+  input::placeholder { color: hsl(var(--muted-foreground)); }
+  .result {
+    margin-top: 14px;
+    display: none;
+    align-items: center;
+    gap: 8px;
+    background: hsl(var(--background));
+    border: 1px solid hsl(var(--border));
+    border-radius: calc(var(--radius) - 2px);
+    padding: 10px 12px;
+  }
+  .result span {
+    flex: 1;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 13px;
+    color: hsl(var(--primary));
+    word-break: break-all;
+  }
+  .result button {
+    background: hsl(var(--primary));
+    color: hsl(var(--primary-foreground));
+    border: none;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 6px 10px;
+    border-radius: calc(var(--radius) - 4px);
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .result button:hover { opacity: 0.9; }
+  .error {
+    margin-top: 14px;
+    font-size: 13px;
+    color: hsl(var(--destructive));
+    display: none;
+  }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="label">paste a <b>pekora.zip</b> api url</div>
+    <input id="input" placeholder="https://www.pekora.zip/apisite/..." autofocus autocomplete="off" spellcheck="false" />
+    <div class="result" id="result">
+      <span id="url"></span>
+      <button id="copy" type="button">Copy</button>
+    </div>
+    <div class="error" id="error"></div>
+  </div>
+
+<script>
+  const ALLOWED_DOMAIN = "pekora.zip";
+  const PROXY_HOST = window.location.origin;
+
+  const input = document.getElementById("input");
+  const resultEl = document.getElementById("result");
+  const urlEl = document.getElementById("url");
+  const errorEl = document.getElementById("error");
+  const copyBtn = document.getElementById("copy");
+
+  function isAllowedHost(host) {
+    return host === ALLOWED_DOMAIN || host.endsWith("." + ALLOWED_DOMAIN);
+  }
+
+  function convert(raw) {
+  const value = raw.trim();
+  if (!value) return { url: "", error: "" };
+
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return { url: "", error: "Only full pekora.zip URLs are allowed." };
+  }
+
+  if (parsed.protocol !== "https:") {
+    return { url: "", error: "Only pekora.zip URLs are allowed." };
+  }
+
+  const host = parsed.hostname;
+  if (host !== "pekora.zip" && host !== "www.pekora.zip") {
+    return { url: "", error: "Only pekora.zip or www.pekora.zip URLs are allowed." };
+  }
+
+  return { url: window.location.origin + parsed.pathname + parsed.search, error: "" };
+}
+
+  input.addEventListener("input", () => {
+    const { url, error } = convert(input.value);
+    if (url) {
+      urlEl.textContent = url;
+      resultEl.style.display = "flex";
+    } else {
+      resultEl.style.display = "none";
+    }
+    errorEl.textContent = error;
+    errorEl.style.display = error ? "block" : "none";
+  });
+
+  copyBtn.addEventListener("click", () => {
+    navigator.clipboard?.writeText(urlEl.textContent);
+    copyBtn.textContent = "Copied";
+    setTimeout(() => (copyBtn.textContent = "Copy"), 1200);
+  });
+</script>
+</body>
+</html>
