@@ -43,8 +43,14 @@ var client = &fasthttp.Client{
 }
 
 func main() {
+	srv := &fasthttp.Server{
+		Handler:      router,
+		ReadTimeout:  timeout,
+		WriteTimeout: timeout,
+		IdleTimeout:  60 * time.Second,
+	}
 	log.Printf("KoroneProxy listening on %s", port)
-	if err := fasthttp.ListenAndServe(port, router); err != nil {
+	if err := srv.ListenAndServe(port); err != nil {
 		log.Fatalf("ListenAndServe: %s", err)
 	}
 }
@@ -113,6 +119,10 @@ func buildUpstreamRequest(req *fasthttp.Request, ctx *fasthttp.RequestCtx, targe
 func doWithRetry(req *fasthttp.Request, resp *fasthttp.Response, attempts int) error {
 	var err error
 	for i := 0; i < attempts; i++ {
+		if i > 0 {
+			resp.Reset()
+			time.Sleep(time.Duration(i) * 50 * time.Millisecond)
+		}
 		if err = client.Do(req, resp); err == nil {
 			return nil
 		}
@@ -127,8 +137,14 @@ func writeUpstreamResponse(ctx *fasthttp.RequestCtx, resp *fasthttp.Response) {
 		}
 		ctx.Response.Header.SetBytesKV(k, v)
 	})
+
+	body, err := resp.BodyUncompressed()
+	if err != nil {
+		body = resp.Body()
+	}
+
 	ctx.SetStatusCode(resp.StatusCode())
-	ctx.SetBody(resp.Body())
+	ctx.SetBody(body)
 }
 
 func handleStatic(ctx *fasthttp.RequestCtx, path string) {

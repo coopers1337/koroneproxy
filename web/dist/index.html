@@ -1,113 +1,91 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="dark">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>KoroneProxy</title>
+<link rel="stylesheet" href="/static/style.css" />
 <style>
-  :root {
-    --background: 240 10% 4%;
-    --foreground: 0 0% 92%;
-    --card: 240 8% 7%;
-    --border: 240 6% 16%;
-    --muted-foreground: 240 5% 55%;
-    --primary: 20 90% 62%;
-    --primary-foreground: 20 90% 8%;
-    --destructive: 0 72% 63%;
-    --ring: 20 90% 62%;
-    --radius: 0.625rem;
-  }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; }
   body {
     min-height: 100vh;
-    background: hsl(var(--background));
-    color: hsl(var(--foreground));
-    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
     display: flex;
     align-items: center;
     justify-content: center;
     padding: 24px;
   }
-  .card {
+
+  .proxy-card {
     width: 100%;
     max-width: 520px;
-    background: hsl(var(--card));
-    border: 1px solid hsl(var(--border));
-    border-radius: var(--radius);
-    padding: 24px;
   }
-  .label {
-    font-size: 13px;
-    font-weight: 500;
-    color: hsl(var(--muted-foreground));
-    margin-bottom: 10px;
+
+  .proxy-brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 22px;
   }
-  .label b { color: hsl(var(--foreground)); }
-  input {
-    width: 100%;
-    background: hsl(var(--background));
-    border: 1px solid hsl(var(--border));
-    color: hsl(var(--foreground));
-    font-family: ui-monospace, "SF Mono", Menlo, monospace;
-    font-size: 13.5px;
-    padding: 10px 12px;
-    border-radius: calc(var(--radius) - 2px);
-    outline: none;
-  }
-  input:focus { border-color: hsl(var(--ring)); box-shadow: 0 0 0 3px hsl(var(--ring) / 0.15); }
-  input::placeholder { color: hsl(var(--muted-foreground)); }
-  .result {
-    margin-top: 14px;
+
+  .proxy-result {
     display: none;
     align-items: center;
     gap: 8px;
-    background: hsl(var(--background));
+    background: hsl(var(--muted));
     border: 1px solid hsl(var(--border));
     border-radius: calc(var(--radius) - 2px);
-    padding: 10px 12px;
-  }
-  .result span {
-    flex: 1;
-    font-family: ui-monospace, "SF Mono", Menlo, monospace;
-    font-size: 13px;
-    color: hsl(var(--primary));
-    word-break: break-all;
-  }
-  .result button {
-    background: hsl(var(--primary));
-    color: hsl(var(--primary-foreground));
-    border: none;
-    font-size: 12px;
-    font-weight: 500;
-    padding: 6px 10px;
-    border-radius: calc(var(--radius) - 4px);
-    cursor: pointer;
-    flex-shrink: 0;
-  }
-  .result button:hover { opacity: 0.9; }
-  .error {
+    padding: 10px 10px 10px 13px;
     margin-top: 14px;
+    animation: fade-in .14s ease;
+  }
+
+  @keyframes fade-in {
+    from { opacity: 0; transform: translateY(-2px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .proxy-result span {
+    flex: 1;
+    font-family: var(--font-mono);
     font-size: 13px;
-    color: hsl(var(--destructive));
+    word-break: break-all;
+    line-height: 1.4;
+  }
+
+  .proxy-error {
     display: none;
+    margin-top: 12px;
+    font-size: 12.5px;
+    color: hsl(0 80% 70%);
+    animation: fade-in .14s ease;
   }
 </style>
 </head>
 <body>
-  <div class="card">
-    <div class="label">paste a <b>pekora.zip</b> api url</div>
-    <input id="input" placeholder="https://www.pekora.zip/apisite/..." autofocus autocomplete="off" spellcheck="false" />
-    <div class="result" id="result">
-      <span id="url"></span>
-      <button id="copy" type="button">Copy</button>
+  <div class="card proxy-card">
+    <div class="proxy-brand">
+      <span class="brand-mark">&gt;_</span>
+      <span class="title">KoroneProxy</span>
     </div>
-    <div class="error" id="error"></div>
+
+    <div class="field">
+      <label>paste a <b>pekora.zip</b> api url</label>
+      <input id="input" type="url" placeholder="https://www.pekora.zip/apisite/..." autofocus autocomplete="off" spellcheck="false" />
+    </div>
+
+    <div class="proxy-result" id="result">
+      <span id="url"></span>
+      <button class="btn btn-primary btn-sm" id="copy" type="button">Copy</button>
+    </div>
+    <div class="proxy-error" id="error"></div>
+
+    <div class="hint" style="margin-top:20px; padding-top:16px; border-top:1px solid hsl(var(--border)); display:flex; justify-content:space-between;">
+      <span>Rewrites to your local proxy host</span>
+      <code>/apisite/*</code>
+    </div>
   </div>
 
 <script>
   const ALLOWED_DOMAIN = "pekora.zip";
-  const PROXY_HOST = window.location.origin;
 
   const input = document.getElementById("input");
   const resultEl = document.getElementById("result");
@@ -115,32 +93,28 @@
   const errorEl = document.getElementById("error");
   const copyBtn = document.getElementById("copy");
 
-  function isAllowedHost(host) {
-    return host === ALLOWED_DOMAIN || host.endsWith("." + ALLOWED_DOMAIN);
-  }
-
   function convert(raw) {
-  const value = raw.trim();
-  if (!value) return { url: "", error: "" };
+    const value = raw.trim();
+    if (!value) return { url: "", error: "" };
 
-  let parsed;
-  try {
-    parsed = new URL(value);
-  } catch {
-    return { url: "", error: "Only full pekora.zip URLs are allowed." };
+    let parsed;
+    try {
+      parsed = new URL(value);
+    } catch {
+      return { url: "", error: "Only full pekora.zip URLs are allowed." };
+    }
+
+    if (parsed.protocol !== "https:") {
+      return { url: "", error: "Only pekora.zip URLs are allowed." };
+    }
+
+    const host = parsed.hostname;
+    if (host !== ALLOWED_DOMAIN && host !== "www." + ALLOWED_DOMAIN) {
+      return { url: "", error: "Only pekora.zip or www.pekora.zip URLs are allowed." };
+    }
+
+    return { url: window.location.origin + parsed.pathname + parsed.search, error: "" };
   }
-
-  if (parsed.protocol !== "https:") {
-    return { url: "", error: "Only pekora.zip URLs are allowed." };
-  }
-
-  const host = parsed.hostname;
-  if (host !== "pekora.zip" && host !== "www.pekora.zip") {
-    return { url: "", error: "Only pekora.zip or www.pekora.zip URLs are allowed." };
-  }
-
-  return { url: window.location.origin + parsed.pathname + parsed.search, error: "" };
-}
 
   input.addEventListener("input", () => {
     const { url, error } = convert(input.value);
