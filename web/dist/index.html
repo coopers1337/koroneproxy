@@ -1,129 +1,74 @@
 <!doctype html>
 <html lang="en" class="dark">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>KoroneProxy</title>
-<link rel="stylesheet" href="/static/style.css" />
-<style>
-  body {
-    min-height: 100vh;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 24px;
-  }
-  .proxy-card {
-    width: 100%;
-    max-width: 480px;
-  }
-  .proxy-brand {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    margin-bottom: 22px;
-  }
-  .proxy-result {
-    display: none;
-    align-items: center;
-    gap: 8px;
-    background: hsl(var(--muted));
-    border: 1px solid hsl(var(--border));
-    border-radius: calc(var(--radius) - 2px);
-    padding: 10px 10px 10px 13px;
-    margin-top: 14px;
-    animation: fade-in .14s ease;
-  }
-  @keyframes fade-in {
-    from { opacity: 0; transform: translateY(-2px); }
-    to { opacity: 1; transform: translateY(0); }
-  }
-  .proxy-result span {
-    flex: 1;
-    font-family: var(--font-mono);
-    font-size: 13px;
-    word-break: break-all;
-    line-height: 1.4;
-  }
-  .proxy-error {
-    display: none;
-    margin-top: 12px;
-    font-size: 12.5px;
-    color: hsl(0 80% 70%);
-    animation: fade-in .14s ease;
-  }
-</style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>KoroneProxy</title>
+  <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
-  <div class="card proxy-card">
-    <div class="proxy-brand">
-      <span class="brand-mark">&gt;_</span>
-      <span class="title">KoroneProxy</span>
+  <main class="card">
+    <header class="brand">
+      <span class="mark">&gt;_</span>
+      <h1>KoroneProxy</h1>
+    </header>
+
+    <label class="field" for="url">
+      <span>paste a <b>pekora.zip</b> api url</span>
+      <input id="url" type="url" placeholder="https://www.pekora.zip/apisite/..." autofocus autocomplete="off" spellcheck="false" />
+    </label>
+
+    <div id="out" class="result" hidden>
+      <code id="proxied"></code>
+      <button id="copy" type="button" class="btn">Copy</button>
     </div>
-    <div class="field">
-      <label for="input">paste a <b>pekora.zip</b> api url</label>
-      <input id="input" type="url" placeholder="https://www.pekora.zip/apisite/..." autofocus autocomplete="off" spellcheck="false" />
-    </div>
-    <div class="proxy-result" id="result">
-      <span id="url"></span>
-      <button class="btn btn-primary btn-sm" id="copy" type="button">Copy</button>
-    </div>
-    <div class="proxy-error" id="error"></div>
-    <div class="hint" style="margin-top:20px; padding-top:16px; border-top:1px solid hsl(var(--border)); display:flex; justify-content:space-between;">
-      <span>Rewrites to your local proxy host</span>
+    <p id="err" class="error" hidden></p>
+
+    <footer class="hint">
+      <span>rewrites to this host</span>
       <code>/apisite/*</code>
-    </div>
-  </div>
-<script>
-  const ALLOWED_DOMAIN = "pekora.zip";
-  const input = document.getElementById("input");
-  const resultEl = document.getElementById("result");
-  const urlEl = document.getElementById("url");
-  const errorEl = document.getElementById("error");
-  const copyBtn = document.getElementById("copy");
+    </footer>
+  </main>
 
-  function convert(raw) {
-    const value = raw.trim();
-    if (!value) return { url: "", error: "" };
+  <script>
+    const ALLOWED = new Set(["pekora.zip", "www.pekora.zip"]);
+    const input = document.getElementById("url");
+    const out = document.getElementById("out");
+    const proxied = document.getElementById("proxied");
+    const err = document.getElementById("err");
+    const copyBtn = document.getElementById("copy");
 
-    let parsed;
-    try {
-      parsed = new URL(value);
-    } catch {
-      return { url: "", error: "Only full pekora.zip URLs are allowed." };
+    function convert(raw) {
+      const v = raw.trim();
+      if (!v) return { url: "", error: "" };
+      let u;
+      try { u = new URL(v); } catch {
+        return { url: "", error: "invalid url" };
+      }
+      if (u.protocol !== "https:") return { url: "", error: "https only" };
+      if (!ALLOWED.has(u.hostname)) return { url: "", error: "pekora.zip only" };
+      return { url: location.origin + u.pathname + u.search, error: "" };
     }
 
-    if (parsed.protocol !== "https:") {
-      return { url: "", error: "Only pekora.zip URLs are allowed." };
-    }
+    input.addEventListener("input", () => {
+      const { url, error } = convert(input.value);
+      if (url) {
+        proxied.textContent = url;
+        out.hidden = false;
+      } else {
+        out.hidden = true;
+      }
+      err.textContent = error;
+      err.hidden = !error;
+    });
 
-    const host = parsed.hostname;
-    if (host !== ALLOWED_DOMAIN && host !== "www." + ALLOWED_DOMAIN) {
-      return { url: "", error: "Only pekora.zip or www.pekora.zip URLs are allowed." };
-    }
-
-    return { url: window.location.origin + parsed.pathname + parsed.search, error: "" };
-  }
-
-  input.addEventListener("input", () => {
-    const { url, error } = convert(input.value);
-
-    if (url) {
-      urlEl.textContent = url;
-      resultEl.style.display = "flex";
-    } else {
-      resultEl.style.display = "none";
-    }
-
-    errorEl.textContent = error;
-    errorEl.style.display = error ? "block" : "none";
-  });
-
-  copyBtn.addEventListener("click", () => {
-    navigator.clipboard?.writeText(urlEl.textContent);
-    copyBtn.textContent = "Copied";
-    setTimeout(() => (copyBtn.textContent = "Copy"), 1200);
-  });
-</script>
+    copyBtn.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(proxied.textContent);
+        copyBtn.textContent = "Copied";
+        setTimeout(() => (copyBtn.textContent = "Copy"), 1000);
+      } catch {}
+    });
+  </script>
 </body>
 </html>

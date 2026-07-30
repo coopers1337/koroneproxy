@@ -3,6 +3,7 @@ package main
 import (
 	"embed"
 	"log"
+	"os"
 	"strings"
 	"time"
 
@@ -13,143 +14,120 @@ import (
 var webFS embed.FS
 
 const (
-	userAgent   = "KoroneProxy"
-	targetHost  = "www.pekora.zip"
-	baseTarget  = "https://" + targetHost
-	apiPrefix   = "/apisite/"
-	healthPath  = "/healthz"
-	port        = ":8080"
-	timeout     = 10 * time.Second
-	maxRetries  = 2
-	retryDelay  = 30 * time.Millisecond
+	userAgent  = "KoroneProxy/1"
+	targetHost = "www.pekora.zip"
+	baseTarget = "https://" + targetHost
+	apiPrefix  = "/apisite/"
+	healthPath = "/healthz"
+	timeout    = 12 * time.Second
+	maxRetries = 1
 )
 
-// Headers that must never be forwarded, either because they're hop-by-hop
-// (RFC 7230 §6.1) or because forwarding them would break the proxied
-// request/response. Keys are canonical MIME header case since the client
-// and server both normalize header names by default.
-var strippedRequestHeaders = map[string]bool{
-	"Host":       true,
-	"Roblox-Id":  true,
-	"User-Agent": true,
+// Hop-by-hop + headers that would break the upstream request.
+var stripReq = map[string]struct{}{
+	"Host": {}, "Connection": {}, "Keep-Alive": {},
+	"Proxy-Authenticate": {}, "Proxy-Authorization": {},
+	"Te": {}, "Trailer": {}, "Transfer-Encoding": {}, "Upgrade": {},
+	"User-Agent": {}, "Roblox-Id": {},
 }
 
-var strippedResponseHeaders = map[string]bool{
-	"Connection":          true,
-	"Keep-Alive":          true,
-	"Proxy-Authenticate":  true,
-	"Proxy-Authorization": true,
-	"Te":                  true,
-	"Trailer":             true,
-	"Transfer-Encoding":   true,
-	"Upgrade":             true,
-	"Content-Encoding":    true, // client auto-decompresses; body no longer matches this header
+// Hop-by-hop + Content-Encoding (body is decompressed before write).
+var stripResp = map[string]struct{}{
+	"Connection": {}, "Keep-Alive": {},
+	"Proxy-Authenticate": {}, "Proxy-Authorization": {},
+	"Te": {}, "Trailer": {}, "Transfer-Encoding": {}, "Upgrade": {},
+	"Content-Encoding": {},
 }
 
-var upstreamClient = &fasthttp.Client{
-	ReadTimeout:              timeout,
-	WriteTimeout:             timeout,
-	MaxIdleConnDuration:      90 * time.Second,
-	MaxConnsPerHost:          1024,
+var upstream = &fasthttp.Client{
+	ReadTimeout:            timeout,
+	WriteTimeout:           timeout,
+	MaxIdleConnDuration:    90 * time.Second,
+	MaxConnsPerHost:        256,
 	NoDefaultUserAgentHeader: true,
-	DisablePathNormalizing:   true,
+	DisablePathNormalizing: true,
 }
-
-const staticRoot = "web/dist"
 
 func main() {
-	srv := &fasthttp.Server{
-		Handler:      router,
-		ReadTimeout:  timeout,
-		WriteTimeout: timeout,
-		IdleTimeout:  60 * time.Second,
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
 	}
-	log.Printf("KoroneProxy listening on %s", port)
-	if err := srv.ListenAndServe(port); err != nil {
-		log.Fatalf("ListenAndServe: %s", err)
+
+	s := &fasthttp.Server{
+		Handler:            router,
+		ReadTimeout:        timeout,
+		WriteTimeout:       timeout,
+		IdleTimeout:        60 * time.Second,
+		ReduceMemoryUsage:  true,
+		MaxRequestBodySize: 4 << 20, // 4 MiB
+	}
+
+	log.Printf("koroneproxy :%s → %s", port, targetHost)
+	if err := s.ListenAndServe(":" + port); err != nil {
+		log.Fatal(err)
 	}
 }
 
 func router(ctx *fasthttp.RequestCtx) {
 	path := string(ctx.Path())
-
 	switch {
 	case path == healthPath:
-		handleHealth(ctx)
+		ctx.SetContentType("application/json")
+		ctx.SetBodyString(`{"status":"ok"}`)
 	case strings.HasPrefix(path, apiPrefix):
-		handleProxy(ctx, path)
+		proxy(ctx, path)
 	default:
-		handleStatic(ctx, path)
+		static(ctx, path)
 	}
 }
 
-func handleHealth(ctx *fasthttp.RequestCtx) {
-	ctx.SetContentType("application/json")
-	ctx.SetBodyString(`{"status":"ok"}`)
-}
-
-func handleProxy(ctx *fasthttp.RequestCtx, path string) {
+func proxy(ctx *fasthttp.RequestCtx, path string) {
 	req := fasthttp.AcquireRequest()
 	resp := fasthttp.AcquireResponse()
 	defer fasthttp.ReleaseRequest(req)
 	defer fasthttp.ReleaseResponse(resp)
 
-	buildUpstreamRequest(req, ctx, path)
-
-	if err := doWithRetry(req, resp); err != nil {
-		ctx.SetStatusCode(fasthttp.StatusBadGateway)
-		ctx.SetBodyString("Proxy failed to connect. Please try again.")
-		return
+	uri := baseTarget + path
+	if q := ctx.QueryArgs().QueryString(); len(q) > 0 {
+		uri += "?" + string(q)
 	}
 
-	writeUpstreamResponse(ctx, resp)
-}
-
-func buildUpstreamRequest(req *fasthttp.Request, ctx *fasthttp.RequestCtx, path string) {
-	target := baseTarget + path
-	if qs := ctx.QueryArgs().QueryString(); len(qs) > 0 {
-		target += "?" + string(qs)
-	}
-
-	req.SetRequestURI(target)
-	req.Header.SetMethod(string(ctx.Method()))
+	req.SetRequestURI(uri)
+	req.Header.SetMethodBytes(ctx.Method())
 	req.SetHost(targetHost)
 	req.Header.Set("User-Agent", userAgent)
 
-	if body := ctx.Request.Body(); len(body) > 0 {
-		req.SetBody(body)
+	if b := ctx.Request.Body(); len(b) > 0 {
+		req.SetBody(b)
 	}
 
 	ctx.Request.Header.VisitAll(func(k, v []byte) {
-		if strippedRequestHeaders[string(k)] {
+		if _, skip := stripReq[string(k)]; skip {
 			return
 		}
 		req.Header.SetBytesKV(k, v)
 	})
-}
 
-func doWithRetry(req *fasthttp.Request, resp *fasthttp.Response) error {
 	var err error
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		if attempt > 0 {
+	for i := 0; i <= maxRetries; i++ {
+		if i > 0 {
 			resp.Reset()
-			time.Sleep(time.Duration(attempt) * retryDelay)
+			time.Sleep(40 * time.Millisecond)
 		}
-
-		err = upstreamClient.DoTimeout(req, resp, timeout)
-		if err == nil {
-			return nil
-		}
-		if err == fasthttp.ErrTimeout {
-			return err // upstream is slow, not transiently down; retrying won't help
+		err = upstream.DoTimeout(req, resp, timeout)
+		if err == nil || err == fasthttp.ErrTimeout {
+			break
 		}
 	}
-	return err
-}
+	if err != nil {
+		ctx.SetStatusCode(fasthttp.StatusBadGateway)
+		ctx.SetBodyString("upstream unavailable")
+		return
+	}
 
-func writeUpstreamResponse(ctx *fasthttp.RequestCtx, resp *fasthttp.Response) {
 	resp.Header.VisitAll(func(k, v []byte) {
-		if strippedResponseHeaders[string(k)] {
+		if _, skip := stripResp[string(k)]; skip {
 			return
 		}
 		ctx.Response.Header.SetBytesKV(k, v)
@@ -159,61 +137,49 @@ func writeUpstreamResponse(ctx *fasthttp.RequestCtx, resp *fasthttp.Response) {
 	if err != nil {
 		body = resp.Body()
 	}
-
 	ctx.SetStatusCode(resp.StatusCode())
 	ctx.SetBody(body)
 }
 
-// handleStatic serves files embedded under web/dist, falling back to
-// index.html for unknown paths so client-side routing keeps working.
-func handleStatic(ctx *fasthttp.RequestCtx, path string) {
-	file := strings.TrimPrefix(path, "/")
-	if file == "" {
-		file = "index.html"
+func static(ctx *fasthttp.RequestCtx, path string) {
+	name := strings.TrimPrefix(path, "/")
+	if name == "" || strings.Contains(name, "..") {
+		name = "index.html"
 	}
 
-	data, err := webFS.ReadFile(staticRoot + "/" + file)
+	data, err := webFS.ReadFile("web/dist/" + name)
 	if err != nil {
-		file = "index.html"
-		if data, err = webFS.ReadFile(staticRoot + "/" + file); err != nil {
+		data, err = webFS.ReadFile("web/dist/index.html")
+		if err != nil {
 			ctx.SetStatusCode(fasthttp.StatusNotFound)
 			return
 		}
+		name = "index.html"
 	}
 
-	ctx.Response.Header.Set("Cache-Control", cacheControlFor(file))
-	ctx.SetContentType(contentTypeFor(file))
-	ctx.SetStatusCode(fasthttp.StatusOK)
+	if name == "index.html" {
+		ctx.Response.Header.Set("Cache-Control", "no-cache")
+	} else {
+		ctx.Response.Header.Set("Cache-Control", "public, max-age=86400, immutable")
+	}
+	ctx.SetContentType(mime(name))
 	ctx.SetBody(data)
 }
 
-// cacheControlFor returns a long cache lifetime for hashed static assets
-// and a short one for index.html, which changes on every deploy.
-func cacheControlFor(file string) string {
-	if file == "index.html" {
-		return "no-cache"
-	}
-	return "public, max-age=600"
-}
-
-func contentTypeFor(file string) string {
+func mime(name string) string {
 	switch {
-	case strings.HasSuffix(file, ".html"):
+	case strings.HasSuffix(name, ".html"):
 		return "text/html; charset=utf-8"
-	case strings.HasSuffix(file, ".css"):
+	case strings.HasSuffix(name, ".css"):
 		return "text/css; charset=utf-8"
-	case strings.HasSuffix(file, ".js"):
+	case strings.HasSuffix(name, ".js"):
 		return "application/javascript; charset=utf-8"
-	case strings.HasSuffix(file, ".json"):
-		return "application/json; charset=utf-8"
-	case strings.HasSuffix(file, ".svg"):
+	case strings.HasSuffix(name, ".svg"):
 		return "image/svg+xml"
-	case strings.HasSuffix(file, ".png"):
+	case strings.HasSuffix(name, ".png"):
 		return "image/png"
-	case strings.HasSuffix(file, ".ico"):
+	case strings.HasSuffix(name, ".ico"):
 		return "image/x-icon"
-	case strings.HasSuffix(file, ".wasm"):
-		return "application/wasm"
 	default:
 		return "application/octet-stream"
 	}

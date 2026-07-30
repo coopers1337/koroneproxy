@@ -1,10 +1,13 @@
 services:
   - type: web
     name: koroneproxy
-    env: go
-    buildCommand: go build -tags netgo -ldflags '-s -w' -o app
+    runtime: go
+    plan: free
+    buildCommand: go mod download && go build -tags netgo -ldflags '-s -w' -o app .
     startCommand: ./app
     healthCheckPath: /healthz
     envVars:
       - key: GOOS
         value: linux
+      - key: GOARCH
+        value: amd64
